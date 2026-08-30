@@ -1,6 +1,20 @@
 package com.ayush.madv2.ui
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.media.MediaRecorder
+import android.provider.ContactsContract
+import androidx.annotation.DrawableRes
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -8,15 +22,17 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,29 +41,44 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.ayush.madv2.R
 import com.ayush.madv2.ui.theme.AppAccent
 import com.ayush.madv2.ui.theme.AppAccentSoft
 import com.ayush.madv2.ui.theme.AppBackground
@@ -59,16 +90,20 @@ import com.ayush.madv2.ui.theme.AppPanel
 import com.ayush.madv2.ui.theme.AppPanelAlt
 import com.ayush.madv2.ui.theme.AppText
 import com.ayush.madv2.ui.theme.MADv2Theme
+import java.io.File
 import java.time.OffsetDateTime
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.ZoneId
+import kotlin.math.sin
 
 enum class AppTab {
     Home,
     Scheduled,
     Contacts,
 }
+
+private const val CONTACTS_PREVIEW_COUNT = 10
 
 data class QuickAction(
     val title: String,
@@ -110,10 +145,10 @@ fun CallAiApp(
         onUserNameChange = callAiViewModel::setUserName,
         onUserIdChange = callAiViewModel::setUserId,
         onBackendBaseUrlChange = callAiViewModel::setBackendBaseUrl,
-        onAddContact = callAiViewModel::addContact,
-        onRemoveContact = callAiViewModel::removeContact,
-        onContactNameChange = callAiViewModel::updateContactName,
-        onContactNumberChange = callAiViewModel::updateContactNumber,
+        onSetContacts = callAiViewModel::setContacts,
+        onSetRecording = callAiViewModel::setRecording,
+        onTranscribeAudio = callAiViewModel::transcribeAudio,
+        onShowError = callAiViewModel::showError,
         onMissingFieldChange = callAiViewModel::updateMissingField,
         onRefreshCalls = callAiViewModel::refreshCalls,
         onCancelCall = callAiViewModel::cancelCall,
@@ -135,10 +170,10 @@ private fun CallAiAppContent(
     onUserNameChange: (String) -> Unit,
     onUserIdChange: (String) -> Unit,
     onBackendBaseUrlChange: (String) -> Unit,
-    onAddContact: () -> Unit,
-    onRemoveContact: (Long) -> Unit,
-    onContactNameChange: (Long, String) -> Unit,
-    onContactNumberChange: (Long, String) -> Unit,
+    onSetContacts: (List<ContactDraft>) -> Unit,
+    onSetRecording: (Boolean) -> Unit,
+    onTranscribeAudio: (File) -> Unit,
+    onShowError: (String) -> Unit,
     onMissingFieldChange: (String, String) -> Unit,
     onRefreshCalls: () -> Unit,
     onCancelCall: (String) -> Unit,
@@ -169,10 +204,10 @@ private fun CallAiAppContent(
                         onUserNameChange = onUserNameChange,
                         onUserIdChange = onUserIdChange,
                         onBackendBaseUrlChange = onBackendBaseUrlChange,
-                        onAddContact = onAddContact,
-                        onRemoveContact = onRemoveContact,
-                        onContactNameChange = onContactNameChange,
-                        onContactNumberChange = onContactNumberChange,
+                        onSetContacts = onSetContacts,
+                        onSetRecording = onSetRecording,
+                        onTranscribeAudio = onTranscribeAudio,
+                        onShowError = onShowError,
                         onMissingFieldChange = onMissingFieldChange,
                         onClearMessages = onClearMessages,
                     )
@@ -187,8 +222,11 @@ private fun CallAiAppContent(
                 }
 
                 AppTab.Contacts -> {
-                    ContactsPlaceholder(
+                    ContactsTab(
+                        uiState = uiState,
                         onOpenSettings = onOpenHomeSettings,
+                        onSetContacts = onSetContacts,
+                        onShowError = onShowError,
                     )
                 }
             }
@@ -214,13 +252,83 @@ private fun HomeTab(
     onUserNameChange: (String) -> Unit,
     onUserIdChange: (String) -> Unit,
     onBackendBaseUrlChange: (String) -> Unit,
-    onAddContact: () -> Unit,
-    onRemoveContact: (Long) -> Unit,
-    onContactNameChange: (Long, String) -> Unit,
-    onContactNumberChange: (Long, String) -> Unit,
+    onSetContacts: (List<ContactDraft>) -> Unit,
+    onSetRecording: (Boolean) -> Unit,
+    onTranscribeAudio: (File) -> Unit,
+    onShowError: (String) -> Unit,
     onMissingFieldChange: (String, String) -> Unit,
     onClearMessages: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val contactsPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            onSetContacts(loadPhoneContacts(context))
+        } else {
+            onShowError("Contacts permission is needed to match people from your phonebook.")
+        }
+    }
+    val recordAudioPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (!granted) {
+            onShowError("Microphone permission is needed for voice prompts.")
+        }
+    }
+    val hasContactsPermission = hasPermission(context, Manifest.permission.READ_CONTACTS)
+    var recorder by remember { mutableStateOf<MediaRecorder?>(null) }
+    var recordingFile by remember { mutableStateOf<File?>(null) }
+
+    LaunchedEffect(hasContactsPermission) {
+        if (hasContactsPermission && uiState.contacts.isEmpty()) {
+            onSetContacts(loadPhoneContacts(context))
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            recorder?.runCatching {
+                reset()
+                release()
+            }
+            recordingFile?.delete()
+        }
+    }
+
+    fun stopRecordingAndTranscribe() {
+        val activeRecorder = recorder
+        val audioFile = recordingFile
+        recorder = null
+        recordingFile = null
+        onSetRecording(false)
+        if (activeRecorder == null || audioFile == null) {
+            onShowError("No voice recording was captured.")
+            return
+        }
+        runCatching {
+            activeRecorder.stop()
+            activeRecorder.reset()
+            activeRecorder.release()
+        }.onSuccess {
+            onTranscribeAudio(audioFile)
+        }.onFailure {
+            audioFile.delete()
+            onShowError("Could not finish the recording. Please try again.")
+        }
+    }
+
+    fun startRecording() {
+        runCatching {
+            val (newRecorder, newFile) = createVoiceRecorder(context)
+            recorder = newRecorder
+            recordingFile = newFile
+            onSetRecording(true)
+        }.onFailure {
+            recordingFile?.delete()
+            recorder = null
+            recordingFile = null
+            onSetRecording(false)
+            onShowError("Could not start recording from the microphone.")
+        }
+    }
+
     val currentHour = ZonedDateTime.now(ZoneId.of("Asia/Kolkata")).hour
     val greeting = when {
         currentHour < 12 -> "Good morning,"
@@ -253,31 +361,15 @@ private fun HomeTab(
                 )
             }
 
-            Spacer(modifier = Modifier.height(76.dp))
+            Spacer(modifier = Modifier.height(52.dp))
 
-            Text(
-                text = greeting,
-                style = MaterialTheme.typography.headlineLarge.copy(
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 36.sp,
-                    lineHeight = 42.sp,
-                    textAlign = TextAlign.Center,
-                ),
-                color = AppText,
-            )
-            Text(
-                text = uiState.userName.ifBlank { "Ayush" },
-                style = MaterialTheme.typography.headlineLarge.copy(
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 36.sp,
-                    lineHeight = 42.sp,
-                    textAlign = TextAlign.Center,
-                ),
-                color = AppText,
+            WelcomeHeader(
+                greeting = greeting,
+                userName = uiState.userName.ifBlank { "Ayush" },
             )
             Text(
                 text = "What would you like me to call?",
-                modifier = Modifier.padding(top = 14.dp),
+                modifier = Modifier.padding(top = 18.dp),
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontSize = 16.sp,
                     lineHeight = 21.sp,
@@ -290,9 +382,38 @@ private fun HomeTab(
                 prompt = uiState.prompt,
                 onPromptChange = onPromptChange,
                 onSubmitPrompt = onSubmitPrompt,
+                onMicClick = {
+                    if (uiState.isRecording) {
+                        stopRecordingAndTranscribe()
+                    } else if (!hasPermission(context, Manifest.permission.RECORD_AUDIO)) {
+                        recordAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    } else {
+                        startRecording()
+                    }
+                },
                 isProcessing = uiState.isProcessing,
+                isRecording = uiState.isRecording,
+                processingMessage = uiState.processingMessage,
                 modifier = Modifier.padding(top = 48.dp),
             )
+
+            if (!hasContactsPermission) {
+                ActionPill(
+                    label = "Allow contacts access",
+                    onClick = { contactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS) },
+                )
+            } else if (uiState.contacts.isNotEmpty()) {
+                Text(
+                    text = "Using ${uiState.contacts.size} phone contacts for matching.",
+                    modifier = Modifier.padding(top = 18.dp),
+                    color = AppMuted,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        textAlign = TextAlign.Center,
+                    ),
+                )
+            }
 
             if (uiState.errorMessage != null || uiState.infoMessage != null) {
                 MessageBanner(
@@ -304,10 +425,16 @@ private fun HomeTab(
             }
 
             AnimatedVisibility(
-                visible = uiState.isProcessing,
+                visible = uiState.isProcessing && !isInlineComposerState(uiState.processingMessage),
                 modifier = Modifier.padding(top = 20.dp),
             ) {
-                ProcessingCard()
+                ProcessingCard(
+                    headline = "Thinking through your call",
+                    detail = when {
+                        !uiState.processingMessage.isNullOrBlank() -> uiState.processingMessage
+                        else -> "Matching the contact, finding the time, and preparing the spoken message."
+                    },
+                )
             }
 
             AnimatedVisibility(
@@ -370,14 +497,9 @@ private fun HomeTab(
                 backendBaseUrl = uiState.backendBaseUrl,
                 userId = uiState.userId,
                 userName = uiState.userName,
-                contacts = uiState.contacts,
                 onBackendBaseUrlChange = onBackendBaseUrlChange,
                 onUserIdChange = onUserIdChange,
                 onUserNameChange = onUserNameChange,
-                onAddContact = onAddContact,
-                onRemoveContact = onRemoveContact,
-                onContactNameChange = onContactNameChange,
-                onContactNumberChange = onContactNumberChange,
             )
         }
     }
@@ -388,65 +510,106 @@ private fun PromptComposer(
     prompt: String,
     onPromptChange: (String) -> Unit,
     onSubmitPrompt: () -> Unit,
+    onMicClick: () -> Unit,
     isProcessing: Boolean,
+    isRecording: Boolean,
+    processingMessage: String?,
     modifier: Modifier = Modifier,
 ) {
+    val inlineMessage = when {
+        isRecording -> "Listening for your prompt"
+        isInlineComposerState(processingMessage) -> processingMessage.orEmpty()
+        else -> ""
+    }
+
     Surface(
         modifier = modifier.fillMaxWidth(),
         color = Color.White,
-        shape = RoundedCornerShape(18.dp),
-        shadowElevation = 2.dp,
+        shape = RoundedCornerShape(24.dp),
+        shadowElevation = 6.dp,
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 18.dp, top = 16.dp, end = 14.dp, bottom = 16.dp),
-            verticalAlignment = Alignment.Bottom,
+                .padding(start = 18.dp, top = 12.dp, end = 14.dp, bottom = 12.dp),
         ) {
-            BasicTextField(
-                value = prompt,
-                onValueChange = onPromptChange,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(bottom = 2.dp),
-                textStyle = MaterialTheme.typography.bodyLarge.copy(
-                    color = AppText,
-                    fontSize = 16.sp,
-                    lineHeight = 24.sp,
-                ),
-                decorationBox = { innerTextField ->
-                    if (prompt.isBlank()) {
-                        Text(
-                            text = "Tell me who to call and what to say...",
-                            color = Color(0xFFB7A7C6),
-                            style = MaterialTheme.typography.bodyLarge.copy(
-                                fontSize = 16.sp,
-                                lineHeight = 24.sp,
-                            ),
-                        )
-                    }
-                    innerTextField()
-                },
-            )
-
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                SmallCircleButton(
-                    onClick = {},
-                    containerColor = Color.Transparent,
-                    contentColor = AppText,
+                BasicTextField(
+                    value = prompt,
+                    onValueChange = onPromptChange,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 12.dp),
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                        color = AppText,
+                        fontSize = 16.sp,
+                        lineHeight = 20.sp,
+                    ),
+                    maxLines = 3,
+                    decorationBox = { innerTextField ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 26.dp),
+                            contentAlignment = Alignment.CenterStart,
+                        ) {
+                            if (prompt.isBlank()) {
+                                Text(
+                                    text = "Tell me who to call and what to say...",
+                                    color = Color(0xFFA694B8),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                        fontSize = 15.sp,
+                                        lineHeight = 20.sp,
+                                    ),
+                                )
+                            }
+                            innerTextField()
+                        }
+                    },
+                )
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    MicGlyph()
+                    SmallCircleButton(
+                        onClick = onMicClick,
+                        containerColor = if (isRecording) AppDanger else Color.Transparent,
+                        contentColor = if (isRecording) Color.White else AppText,
+                    ) {
+                        if (isRecording) {
+                            StopGlyph()
+                        } else {
+                            DrawableGlyph(
+                                drawableRes = R.drawable.baseline_mic_24,
+                                tint = AppText,
+                            )
+                        }
+                    }
+                    SmallCircleButton(
+                        onClick = onSubmitPrompt,
+                        containerColor = if (isProcessing || isRecording) AppAccentSoft else AppAccent,
+                        contentColor = Color.White,
+                    ) {
+                        ArrowGlyph()
+                    }
                 }
-                SmallCircleButton(
-                    onClick = onSubmitPrompt,
-                    containerColor = if (isProcessing) AppAccentSoft else AppAccent,
-                    contentColor = Color.White,
-                ) {
-                    ArrowGlyph()
-                }
+            }
+
+            AnimatedVisibility(
+                visible = isRecording || inlineMessage.isNotBlank(),
+            ) {
+                ComposerStatusStrip(
+                    label = if (isRecording) "Listening..." else inlineMessage,
+                    isRecording = isRecording,
+                    isThinking = !isRecording,
+                    modifier = Modifier.padding(top = 14.dp, end = 8.dp),
+                )
             }
         }
     }
@@ -497,40 +660,127 @@ private fun MessageBanner(
 }
 
 @Composable
-private fun ProcessingCard() {
+private fun ComposerStatusStrip(
+    label: String,
+    isRecording: Boolean,
+    isThinking: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                color = if (isRecording) AppDanger else AppAccent,
+                style = MaterialTheme.typography.labelLarge.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                ),
+            )
+            Text(
+                text = if (isRecording) "Tap the square to stop" else "Turning your voice into text",
+                modifier = Modifier.padding(top = 4.dp),
+                color = AppMuted,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                ),
+            )
+        }
+        VoiceWaveform(
+            active = isRecording || isThinking,
+            tint = if (isRecording) AppDanger else AppAccent,
+        )
+    }
+}
+
+@Composable
+private fun VoiceWaveform(
+    active: Boolean,
+    tint: Color,
+    modifier: Modifier = Modifier,
+) {
+    val transition = rememberInfiniteTransition(label = "voice-wave")
+    val progress by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = if (active) 1100 else 1800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "voice-wave-progress",
+    )
+
+    Canvas(
+        modifier = modifier
+            .width(94.dp)
+            .height(28.dp)
+    ) {
+        val bars = 12
+        val barWidth = size.width / (bars * 1.8f)
+        val gap = barWidth * 0.8f
+        for (index in 0 until bars) {
+            val oscillation = (sin((progress * 6f) + index * 0.55f) + 1f) / 2f
+            val normalizedHeight = if (active) 0.25f + (oscillation * 0.75f) else 0.2f
+            val barHeight = size.height * normalizedHeight
+            val left = index * (barWidth + gap)
+            drawRoundRect(
+                color = tint.copy(alpha = 0.28f + (oscillation * 0.64f)),
+                topLeft = Offset(left, (size.height - barHeight) / 2f),
+                size = Size(barWidth, barHeight),
+                cornerRadius = CornerRadius(barWidth, barWidth),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProcessingCard(
+    headline: String,
+    detail: String,
+) {
+    val transition = rememberInfiniteTransition(label = "processing-card")
+    val glow by transition.animateFloat(
+        initialValue = 0.15f,
+        targetValue = 0.5f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "processing-card-glow",
+    )
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = Color.White,
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(22.dp),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color.White,
+                            AppAccentSoft.copy(alpha = glow),
+                        )
+                    )
+                )
                 .padding(18.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
-                verticalAlignment = Alignment.Bottom,
-            ) {
-                repeat(5) { index ->
-                    Surface(
-                        modifier = Modifier
-                            .height((10 + index * 4).dp)
-                            .size(width = 6.dp, height = (10 + index * 4).dp),
-                        color = AppAccent,
-                        shape = RoundedCornerShape(999.dp),
-                    ) {}
-                }
-            }
+            VoiceWaveform(active = true, tint = AppAccent)
             Text(
-                text = "Thinking through your call",
+                text = headline,
                 modifier = Modifier.padding(top = 16.dp),
                 color = AppText,
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
             )
             Text(
-                text = "Matching the contact, finding the time, and preparing the spoken message.",
+                text = detail,
                 modifier = Modifier.padding(top = 8.dp),
                 color = AppMuted,
                 style = MaterialTheme.typography.bodyMedium.copy(
@@ -747,14 +997,9 @@ private fun SettingsCard(
     backendBaseUrl: String,
     userId: String,
     userName: String,
-    contacts: List<ContactDraft>,
     onBackendBaseUrlChange: (String) -> Unit,
     onUserIdChange: (String) -> Unit,
     onUserNameChange: (String) -> Unit,
-    onAddContact: () -> Unit,
-    onRemoveContact: (Long) -> Unit,
-    onContactNameChange: (Long, String) -> Unit,
-    onContactNumberChange: (Long, String) -> Unit,
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -806,51 +1051,6 @@ private fun SettingsCard(
                 placeholder = "Ayush",
                 onValueChange = onUserNameChange,
             )
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "Contacts",
-                    color = AppText,
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                )
-                ActionPill(
-                    label = "Add",
-                    onClick = onAddContact,
-                )
-            }
-
-            contacts.forEach { contact ->
-                Spacer(modifier = Modifier.height(12.dp))
-                FieldInput(
-                    value = contact.name,
-                    placeholder = "Contact name",
-                    onValueChange = { onContactNameChange(contact.id, it) },
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                FieldInput(
-                    value = contact.number,
-                    placeholder = "+918879279251",
-                    onValueChange = { onContactNumberChange(contact.id, it) },
-                )
-                Text(
-                    text = "Remove",
-                    modifier = Modifier
-                        .padding(top = 8.dp)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            onClick = { onRemoveContact(contact.id) },
-                        ),
-                    color = AppDanger,
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                )
-            }
         }
     }
 }
@@ -870,7 +1070,7 @@ private fun ScheduledTab(
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Top,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Column {
                 Text(
@@ -901,10 +1101,16 @@ private fun ScheduledTab(
                     color = AppMuted,
                 )
             }
-            ActionPill(
-                label = if (uiState.isRefreshingCalls) "Loading..." else "Refresh",
+            SmallCircleButton(
                 onClick = onRefreshCalls,
-            )
+                containerColor = if (uiState.isRefreshingCalls) AppAccentSoft else Color.White,
+                contentColor = AppAccent,
+            ) {
+                DrawableGlyph(
+                    drawableRes = R.drawable.refresh,
+                    tint = AppAccent,
+                )
+            }
         }
 
         LazyColumn(
@@ -1047,50 +1253,181 @@ private fun EmptyCard(text: String) {
 }
 
 @Composable
-private fun ContactsPlaceholder(
+private fun ContactsTab(
+    uiState: CallAiUiState,
     onOpenSettings: () -> Unit,
+    onSetContacts: (List<ContactDraft>) -> Unit,
+    onShowError: (String) -> Unit,
 ) {
+    val context = LocalContext.current
+    var searchQuery by remember { mutableStateOf("") }
+    var showAllContacts by remember { mutableStateOf(false) }
+    val hasContactsPermission = hasPermission(context, Manifest.permission.READ_CONTACTS)
+    val contactsPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            onSetContacts(loadPhoneContacts(context))
+        } else {
+            onShowError("Contacts permission is needed to sync the phonebook.")
+        }
+    }
+
+    LaunchedEffect(hasContactsPermission) {
+        if (hasContactsPermission && uiState.contacts.isEmpty()) {
+            onSetContacts(loadPhoneContacts(context))
+        }
+    }
+
+    val filteredContacts = uiState.contacts.filter { contact ->
+        if (searchQuery.isBlank()) {
+            true
+        } else {
+            val needle = searchQuery.trim().lowercase()
+            contact.name.lowercase().contains(needle) || contact.number.contains(needle)
+        }
+    }
+    val visibleContacts = if (showAllContacts || searchQuery.isNotBlank()) filteredContacts else filteredContacts.take(CONTACTS_PREVIEW_COUNT)
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 18.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+        horizontalAlignment = Alignment.Start,
     ) {
-        Spacer(modifier = Modifier.height(132.dp))
-        Surface(
-            modifier = Modifier.size(72.dp),
-            color = AppAccentSoft,
-            shape = CircleShape,
+        Spacer(modifier = Modifier.height(28.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                PersonGlyph(color = AppAccent)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Contacts",
+                    color = AppAccent,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.2.sp,
+                    ),
+                )
+                Text(
+                    text = if (hasContactsPermission) "Search your phonebook" else "Bring in your phone contacts",
+                    modifier = Modifier.padding(top = 8.dp),
+                    color = AppText,
+                    style = MaterialTheme.typography.headlineSmall.copy(
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 30.sp,
+                        lineHeight = 34.sp,
+                    ),
+                )
+            }
+            Surface(
+                modifier = Modifier.size(48.dp),
+                color = AppAccentSoft,
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    DrawableGlyph(
+                        drawableRes = R.drawable.outline_account_circle_24,
+                        tint = AppAccent,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
             }
         }
         Text(
-            text = "Contacts will come from the phone later.",
-            modifier = Modifier.padding(top = 20.dp),
-            color = AppText,
-            style = MaterialTheme.typography.titleMedium.copy(
-                fontWeight = FontWeight.Bold,
-                fontSize = 22.sp,
-                textAlign = TextAlign.Center,
-            ),
-        )
-        Text(
-            text = "For now, use the testing setup drawer to change the backend URL, your name, and the contacts used for matching.",
-            modifier = Modifier.padding(top = 10.dp),
+            text = if (hasContactsPermission) {
+                "These ${uiState.contacts.size} contacts are what the scheduling agent uses to match names from your prompt."
+            } else {
+                "Grant access once and the app will use your actual phonebook instead of hardcoded testing contacts."
+            },
+            modifier = Modifier.padding(top = 12.dp),
             color = AppMuted,
             style = MaterialTheme.typography.bodyMedium.copy(
                 fontSize = 15.sp,
                 lineHeight = 21.sp,
-                textAlign = TextAlign.Center,
             ),
         )
         Spacer(modifier = Modifier.height(22.dp))
-        ActionPill(
-            label = "Open testing setup",
-            onClick = onOpenSettings,
-        )
+        if (!hasContactsPermission) {
+            FilledActionButton(
+                label = "Allow contacts access",
+                onClick = { contactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS) },
+            )
+        } else {
+            ActionPill(
+                label = "Refresh contacts",
+                onClick = { onSetContacts(loadPhoneContacts(context)) },
+            )
+            Spacer(modifier = Modifier.height(18.dp))
+            FieldInput(
+                value = searchQuery,
+                placeholder = "Search name or number",
+                onValueChange = {
+                    searchQuery = it
+                    if (it.isNotBlank()) {
+                        showAllContacts = true
+                    }
+                },
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            if (uiState.contacts.isEmpty()) {
+                EmptyCard(text = "No phone contacts were found.")
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f, fill = false),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(bottom = 110.dp),
+                ) {
+                    items(visibleContacts, key = { it.id }) { contact ->
+                        Surface(
+                            color = Color.White,
+                            shape = RoundedCornerShape(18.dp),
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                            ) {
+                                Text(
+                                    text = contact.name,
+                                    color = AppText,
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                )
+                                Text(
+                                    text = contact.number,
+                                    modifier = Modifier.padding(top = 6.dp),
+                                    color = AppMuted,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                                )
+                            }
+                        }
+                    }
+                    if (!showAllContacts && searchQuery.isBlank() && filteredContacts.size > CONTACTS_PREVIEW_COUNT) {
+                        item {
+                            ActionPill(
+                                label = "...more",
+                                onClick = { showAllContacts = true },
+                            )
+                        }
+                    }
+                    if (filteredContacts.isEmpty()) {
+                        item {
+                            EmptyCard(text = "No contacts matched your search.")
+                        }
+                    }
+                    item { Spacer(modifier = Modifier.height(110.dp)) }
+                }
+            }
+        }
+
+        if (!hasContactsPermission) {
+            Spacer(modifier = Modifier.height(12.dp))
+            ActionPill(
+                label = "Open testing setup",
+                onClick = onOpenSettings,
+            )
+        }
     }
 }
 
@@ -1130,7 +1467,10 @@ private fun BottomNavigationBar(
                 isActive = selectedTab == AppTab.Contacts,
                 onClick = { onTabSelected(AppTab.Contacts) },
             ) {
-                PersonGlyph(color = if (selectedTab == AppTab.Contacts) AppAccent else AppMuted)
+                DrawableGlyph(
+                    drawableRes = R.drawable.outline_account_circle_24,
+                    tint = if (selectedTab == AppTab.Contacts) AppAccent else AppMuted,
+                )
             }
         }
     }
@@ -1188,13 +1528,67 @@ private fun ActionPill(
     ) {
         Text(
             text = label,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 11.dp),
             color = AppText,
             style = MaterialTheme.typography.labelLarge.copy(
                 fontWeight = FontWeight.Medium,
                 fontSize = 13.sp,
             ),
         )
+    }
+}
+
+@Composable
+private fun WelcomeHeader(
+    greeting: String,
+    userName: String,
+) {
+    Surface(
+        color = Color.Transparent,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = greeting.uppercase(),
+                color = AppAccent,
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.4.sp,
+                ),
+            )
+            Text(
+                text = userName,
+                modifier = Modifier.padding(top = 12.dp),
+                style = MaterialTheme.typography.headlineLarge.copy(
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 44.sp,
+                    lineHeight = 46.sp,
+                    textAlign = TextAlign.Center,
+                ),
+                color = AppText,
+            )
+            Canvas(
+                modifier = Modifier
+                    .padding(top = 16.dp)
+                    .width(112.dp)
+                    .height(10.dp)
+            ) {
+                drawRoundRect(
+                    brush = Brush.horizontalGradient(
+                        colors = listOf(
+                            AppAccentSoft.copy(alpha = 0.15f),
+                            AppAccent.copy(alpha = 0.75f),
+                            AppAccentSoft.copy(alpha = 0.15f),
+                        )
+                    ),
+                    topLeft = Offset.Zero,
+                    size = size,
+                    cornerRadius = CornerRadius(size.height, size.height),
+                )
+            }
+        }
     }
 }
 
@@ -1263,6 +1657,20 @@ private fun SmallCircleButton(
             }
         }
     }
+}
+
+@Composable
+private fun DrawableGlyph(
+    @DrawableRes drawableRes: Int,
+    tint: Color,
+    modifier: Modifier = Modifier,
+) {
+    Icon(
+        painter = painterResource(id = drawableRes),
+        contentDescription = null,
+        tint = tint,
+        modifier = modifier.size(18.dp),
+    )
 }
 
 @Composable
@@ -1415,29 +1823,85 @@ private fun formatTime(rawTime: String?): String {
     }.getOrElse { rawTime }
 }
 
+private fun isInlineComposerState(processingMessage: String?): Boolean {
+    val message = processingMessage.orEmpty().lowercase()
+    return message.contains("transcrib") || message.contains("voice")
+}
+
+private fun hasPermission(context: Context, permission: String): Boolean {
+    return ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+}
+
+private fun loadPhoneContacts(context: Context): List<ContactDraft> {
+    val contactsByNumber = linkedMapOf<String, ContactDraft>()
+    val projection = arrayOf(
+        ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+        ContactsContract.CommonDataKinds.Phone.NUMBER,
+    )
+
+    context.contentResolver.query(
+        ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+        projection,
+        null,
+        null,
+        "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} ASC",
+    )?.use { cursor ->
+        val nameIndex = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+        val numberIndex = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+        var nextId = 1L
+
+        while (cursor.moveToNext()) {
+            val rawName = cursor.getString(nameIndex).orEmpty().trim()
+            val rawNumber = cursor.getString(numberIndex).orEmpty().trim()
+            val normalizedNumber = normalizePhoneNumber(rawNumber)
+            if (rawName.isBlank() || normalizedNumber.isBlank() || contactsByNumber.containsKey(normalizedNumber)) {
+                continue
+            }
+            contactsByNumber[normalizedNumber] = ContactDraft(
+                id = nextId++,
+                name = rawName,
+                number = normalizedNumber,
+            )
+        }
+    }
+
+    return contactsByNumber.values.toList()
+}
+
+private fun normalizePhoneNumber(rawNumber: String): String {
+    val digits = rawNumber.filter { it.isDigit() }
+    return when {
+        digits.length == 10 && digits.first() in "6789" -> "+91$digits"
+        digits.length == 12 && digits.startsWith("91") -> "+$digits"
+        digits.length == 11 && digits.startsWith("0") && digits[1] in "6789" -> "+91${digits.drop(1)}"
+        rawNumber.trim().startsWith("+") && digits.isNotBlank() -> rawNumber.trim()
+        else -> rawNumber.trim()
+    }
+}
+
+private fun createVoiceRecorder(context: Context): Pair<MediaRecorder, File> {
+    val audioFile = File.createTempFile("voice_prompt_", ".m4a", context.cacheDir)
+    val recorder = MediaRecorder().apply {
+        setAudioSource(MediaRecorder.AudioSource.MIC)
+        setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+        setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+        setAudioSamplingRate(16000)
+        setAudioEncodingBitRate(96000)
+        setOutputFile(audioFile.absolutePath)
+        prepare()
+        start()
+    }
+    return recorder to audioFile
+}
+
 @Composable
-private fun MicGlyph(color: Color = AppText) {
-    Canvas(modifier = Modifier.size(16.dp)) {
+private fun StopGlyph(color: Color = Color.White) {
+    Canvas(modifier = Modifier.size(14.dp)) {
         drawRoundRect(
             color = color,
-            topLeft = Offset(size.width * 0.32f, size.height * 0.1f),
-            size = Size(size.width * 0.36f, size.height * 0.48f),
-            cornerRadius = CornerRadius(12f, 12f),
-            style = Stroke(width = 2f)
-        )
-        drawLine(
-            color = color,
-            start = Offset(size.width * 0.2f, size.height * 0.48f),
-            end = Offset(size.width * 0.8f, size.height * 0.48f),
-            strokeWidth = 2f,
-            cap = StrokeCap.Round,
-        )
-        drawLine(
-            color = color,
-            start = Offset(size.width * 0.5f, size.height * 0.58f),
-            end = Offset(size.width * 0.5f, size.height * 0.86f),
-            strokeWidth = 2f,
-            cap = StrokeCap.Round,
+            topLeft = Offset(size.width * 0.18f, size.height * 0.18f),
+            size = Size(size.width * 0.64f, size.height * 0.64f),
+            cornerRadius = CornerRadius(4f, 4f),
         )
     }
 }
@@ -1546,10 +2010,10 @@ private fun CallAiAppPreview() {
             onUserNameChange = {},
             onUserIdChange = {},
             onBackendBaseUrlChange = {},
-            onAddContact = {},
-            onRemoveContact = {},
-            onContactNameChange = { _, _ -> },
-            onContactNumberChange = { _, _ -> },
+            onSetContacts = {},
+            onSetRecording = {},
+            onTranscribeAudio = {},
+            onShowError = {},
             onMissingFieldChange = { _, _ -> },
             onRefreshCalls = {},
             onCancelCall = {},

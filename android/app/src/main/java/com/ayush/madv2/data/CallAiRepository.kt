@@ -6,12 +6,24 @@ import com.ayush.madv2.network.CallsResponseDto
 import com.ayush.madv2.network.NetworkModule
 import com.ayush.madv2.network.ScheduleCallRequestDto
 import com.ayush.madv2.network.ScheduleCallResponseDto
+import com.ayush.madv2.network.TranscriptionResponseDto
 import com.google.gson.Gson
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.asRequestBody
 import retrofit2.Response
+import java.io.File
 
 class CallAiRepository(
     private val gson: Gson = Gson(),
 ) {
+    suspend fun transcribeAudio(baseUrl: String, file: File): TranscriptionResponseDto {
+        val requestBody = file.asRequestBody("audio/mp4".toMediaTypeOrNull())
+        val audioPart = MultipartBody.Part.createFormData("audio", file.name, requestBody)
+        val response = createApi(baseUrl).transcribeAudio(audioPart)
+        return response.bodyOrThrow()
+    }
+
     suspend fun scheduleCall(baseUrl: String, request: ScheduleCallRequestDto): ScheduleCallResponseDto {
         val response = createApi(baseUrl).scheduleCall(request)
         return response.bodyOrThrow()

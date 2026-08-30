@@ -8,6 +8,7 @@ from flask import Blueprint, current_app, jsonify, request, send_from_directory
 from ..database import get_db
 from ..models import CallJob
 from ..services.llm_service import normalize_indian_number, process_message
+from ..services.transcription_service import transcribe_audio
 from ..services.tts_service import generate_audio
 from ..tasks.call_task import execute_call
 from ..utils.helpers import (
@@ -194,6 +195,23 @@ def serve_generated_audio(filename: str):
 @calls_bp.get("/health")
 def health_check():
     return jsonify({"status": "ok"}), 200
+
+
+@calls_bp.post("/transcribe-audio")
+def transcribe_audio_route():
+    audio_file = request.files.get("audio")
+    if audio_file is None:
+        return jsonify({"status": "error", "message": "audio file is required."}), 400
+
+    try:
+        transcribed_text = transcribe_audio(audio_file)
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+    except Exception:
+        current_app.logger.exception("Failed to transcribe uploaded audio.")
+        return jsonify({"status": "error", "message": "Unable to transcribe audio right now."}), 502
+
+    return jsonify({"status": "ok", "text": transcribed_text}), 200
 
 
 @calls_bp.post("/schedule-call")

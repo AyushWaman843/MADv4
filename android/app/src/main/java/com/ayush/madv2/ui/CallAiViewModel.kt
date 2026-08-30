@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.IOException
+import java.io.File
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 
@@ -82,8 +83,10 @@ data class CallAiUiState(
     val userId: String = "user_001",
     val userName: String = "Ayush",
     val prompt: String = "",
-    val contacts: List<ContactDraft> = listOf(ContactDraft(1L, "Ayush Waman", "+918879279251")),
+    val contacts: List<ContactDraft> = emptyList(),
     val isProcessing: Boolean = false,
+    val processingMessage: String? = null,
+    val isRecording: Boolean = false,
     val isRefreshingCalls: Boolean = false,
     val feedbackJson: String = "",
     val infoMessage: String? = null,
@@ -146,6 +149,24 @@ class CallAiViewModel(
 
     fun setBackendBaseUrl(value: String) {
         _uiState.update { it.copy(backendBaseUrl = value) }
+    }
+
+    fun setContacts(contacts: List<ContactDraft>) {
+        _uiState.update { state ->
+            state.copy(
+                contacts = contacts,
+                infoMessage = if (contacts.isEmpty()) "No phone contacts were found." else "Synced ${contacts.size} contacts from your phone.",
+                errorMessage = null,
+            )
+        }
+    }
+
+    fun setRecording(isRecording: Boolean) {
+        _uiState.update { it.copy(isRecording = isRecording, errorMessage = null, infoMessage = null) }
+    }
+
+    fun showError(message: String) {
+        _uiState.update { it.copy(errorMessage = message, infoMessage = null, isProcessing = false, processingMessage = null, isRecording = false) }
     }
 
     fun addContact() {
@@ -216,6 +237,7 @@ class CallAiViewModel(
             _uiState.update {
                 it.copy(
                     isProcessing = true,
+                    processingMessage = "Matching the contact, finding the time, and preparing the spoken message.",
                     errorMessage = null,
                     infoMessage = null,
                     confirmationDraft = null,
@@ -232,6 +254,7 @@ class CallAiViewModel(
                 _uiState.update {
                     it.copy(
                         isProcessing = false,
+                        processingMessage = null,
                         errorMessage = error.asUserMessage(),
                     )
                 }
@@ -250,6 +273,7 @@ class CallAiViewModel(
             _uiState.update {
                 it.copy(
                     isProcessing = true,
+                    processingMessage = "Preparing the final call details before scheduling.",
                     errorMessage = null,
                     infoMessage = null,
                 )
@@ -268,10 +292,52 @@ class CallAiViewModel(
                 _uiState.update {
                     it.copy(
                         isProcessing = false,
+                        processingMessage = null,
                         errorMessage = error.asUserMessage(),
                     )
                 }
             }
+        }
+    }
+
+    fun transcribeAudio(file: File) {
+        val state = uiState.value
+
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    isProcessing = true,
+                    processingMessage = "Transcribing your voice note with Whisper.",
+                    isRecording = false,
+                    errorMessage = null,
+                    infoMessage = null,
+                )
+            }
+
+            runCatching {
+                repository.transcribeAudio(state.backendBaseUrl.trim(), file)
+            }.onSuccess { response ->
+                val transcript = response.text.trim()
+                _uiState.update {
+                    it.copy(
+                        isProcessing = false,
+                        processingMessage = null,
+                        prompt = mergePromptWithTranscript(it.prompt, transcript),
+                        infoMessage = "Voice prompt added.",
+                        feedbackJson = repository.toPrettyJson(response),
+                    )
+                }
+            }.onFailure { error ->
+                _uiState.update {
+                    it.copy(
+                        isProcessing = false,
+                        processingMessage = null,
+                        errorMessage = error.asUserMessage(),
+                    )
+                }
+            }
+
+            runCatching { file.delete() }
         }
     }
 
@@ -293,6 +359,7 @@ class CallAiViewModel(
                 _uiState.update {
                     it.copy(
                         isRefreshingCalls = false,
+                        processingMessage = if (it.isProcessing) it.processingMessage else null,
                         upcomingCalls = response.upcoming.map(::toUiModel),
                         historyCalls = response.past.map(::toUiModel),
                     )
@@ -368,6 +435,7 @@ class CallAiViewModel(
                 _uiState.update {
                     it.copy(
                         isProcessing = false,
+                        processingMessage = null,
                         feedbackJson = prettyJson,
                         infoMessage = response.message,
                         missingFieldsDraft = MissingFieldsDraft(
@@ -386,6 +454,7 @@ class CallAiViewModel(
                 _uiState.update {
                     it.copy(
                         isProcessing = false,
+                        processingMessage = null,
                         feedbackJson = prettyJson,
                         infoMessage = response.message,
                         missingFieldsDraft = null,
@@ -404,6 +473,7 @@ class CallAiViewModel(
                 _uiState.update {
                     it.copy(
                         isProcessing = false,
+                        processingMessage = null,
                         feedbackJson = prettyJson,
                         infoMessage = "Call scheduled successfully.",
                         missingFieldsDraft = null,
@@ -419,6 +489,7 @@ class CallAiViewModel(
                 _uiState.update {
                     it.copy(
                         isProcessing = false,
+                        processingMessage = null,
                         feedbackJson = prettyJson,
                         errorMessage = response.message ?: "Unexpected response from the backend.",
                     )
@@ -459,9 +530,18 @@ class CallAiViewModel(
         }
     }
 
+    private fun mergePromptWithTranscript(existingPrompt: String, transcript: String): String {
+        val cleanTranscript = transcript.trim()
+        if (cleanTranscript.isBlank()) {
+            return existingPrompt
+        }
+        val cleanPrompt = existingPrompt.trim()
+        return if (cleanPrompt.isBlank()) cleanTranscript else "$cleanPrompt $cleanTranscript"
+    }
+
     private fun Throwable.asUserMessage(): String {
         return when (this) {
-            is IOException -> "Could not reach the backend. Check the emulator URL and make sure Flask is running."
+            is IOException -> "Could not reach the backend. Check the phone or emulator backend URL and make sure Flask is running."
             is IllegalStateException -> message ?: "The backend returned an unexpected response."
             else -> message ?: "Something went wrong while talking to the backend."
         }

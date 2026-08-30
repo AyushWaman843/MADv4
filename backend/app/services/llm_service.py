@@ -22,6 +22,33 @@ GENERIC_CONTACT_NAMES = {
     "them",
     "unknown",
 }
+CONTACT_STOP_WORDS = {
+    "about",
+    "after",
+    "and",
+    "at",
+    "before",
+    "by",
+    "in",
+    "next",
+    "on",
+    "please",
+    "say",
+    "saying",
+    "tell",
+    "that",
+    "this",
+    "to",
+    "tomorrow",
+    "tonight",
+    "when",
+}
+RELATIONSHIP_ALIASES = {
+    "mom": {"mom", "mother", "mum", "mummy", "maa", "amma", "ammi", "ma"},
+    "dad": {"dad", "father", "papa", "abba", "abbu", "daddy"},
+    "brother": {"bro", "brother", "bhai", "anna"},
+    "sister": {"sis", "sister", "didi", "akka"},
+}
 
 
 def normalize_indian_number(number: str) -> str:
@@ -55,10 +82,21 @@ def _normalize_contacts(contacts: list[dict]) -> list[dict]:
         normalized_contacts.append(
             {
                 "name": name,
+                "normalized_name": _normalize_name(name),
                 "number": normalize_indian_number(str(contact.get("number") or "")),
             }
         )
     return normalized_contacts
+
+
+def _collect_alias_tokens(value: str) -> set[str]:
+    normalized_value = _normalize_name(value)
+    tokens = set(normalized_value.split())
+    for canonical_name, aliases in RELATIONSHIP_ALIASES.items():
+        if canonical_name in tokens or aliases.intersection(tokens):
+            tokens.update(aliases)
+            tokens.add(canonical_name)
+    return {token for token in tokens if token}
 
 
 def _contact_score(requested_name: str, contact_name: str) -> float:
@@ -99,11 +137,63 @@ def _find_contact_in_prompt(raw_prompt: str, contacts: list[dict]) -> dict | Non
     prompt_words = set(_normalize_name(raw_prompt).split())
     possible_matches = []
     for contact in contacts:
-        contact_words = set(_normalize_name(contact["name"]).split())
-        meaningful_words = {word for word in contact_words if len(word) >= 3}
+        contact_words = _collect_alias_tokens(contact["name"])
+        meaningful_words = {word for word in contact_words if len(word) >= 2}
         if meaningful_words and meaningful_words.intersection(prompt_words):
             possible_matches.append(contact)
     return possible_matches[0] if len(possible_matches) == 1 else None
+
+
+def _extract_contact_phrase(raw_prompt: str) -> str:
+    normalized_prompt = _normalize_name(raw_prompt)
+    if not normalized_prompt:
+        return ""
+
+    match = re.search(r"\bcall\s+([a-z0-9 ]+)", normalized_prompt)
+    if not match:
+        return ""
+
+    candidate_tokens = []
+    for token in match.group(1).split():
+        if token in CONTACT_STOP_WORDS:
+            break
+        candidate_tokens.append(token)
+        if len(candidate_tokens) >= 4:
+            break
+    return " ".join(candidate_tokens).strip()
+
+
+def _match_contact_from_prompt(raw_prompt: str, contacts: list[dict]) -> dict | None:
+    if not contacts:
+        return None
+
+    contact_phrase = _extract_contact_phrase(raw_prompt)
+    prompt_words = set(_normalize_name(raw_prompt).split())
+    phrase_words = set(contact_phrase.split())
+
+    exact_matches = []
+    alias_matches = []
+    for contact in contacts:
+        contact_words = set(contact.get("normalized_name", "").split())
+        if contact_phrase and contact.get("normalized_name") == contact_phrase:
+            exact_matches.append(contact)
+            continue
+        if phrase_words and phrase_words == contact_words:
+            exact_matches.append(contact)
+            continue
+
+        alias_words = _collect_alias_tokens(contact["name"])
+        if phrase_words and phrase_words.intersection(alias_words):
+            alias_matches.append(contact)
+            continue
+        if alias_words and alias_words.intersection(prompt_words):
+            alias_matches.append(contact)
+
+    if len(exact_matches) == 1:
+        return exact_matches[0]
+    if len(alias_matches) == 1:
+        return alias_matches[0]
+    return None
 
 
 def _build_spoken_message(user_name: str, contact_name: str, message: str) -> str:
@@ -151,7 +241,9 @@ def _normalize_result(
         contact_name = contact_name or direct_number
         contact_number = direct_number
     else:
-        matched_contact = _match_contact(requested_name, normalized_contacts)
+        matched_contact = _match_contact_from_prompt(raw_prompt, normalized_contacts)
+        if matched_contact is None:
+            matched_contact = _match_contact(requested_name, normalized_contacts)
         if matched_contact is None:
             matched_contact = _find_contact_in_prompt(raw_prompt, normalized_contacts)
         contact_name = matched_contact["name"] if matched_contact else ""
@@ -217,6 +309,8 @@ def process_message(raw_prompt: str, user_name: str, contacts: list[dict], curre
         "Choose contact_name only from the supplied contacts when a clear match exists. If a phone number appears "
         "directly in the prompt, use it and do not require a contacts match; use the person's stated name, or the "
         "number itself if no name is stated. contact_number should be +91 followed by 10 digits when known. "
+        "Preserve the user's language, code-switching, slang, and mixed Indian-language phrasing in the extracted "
+        "message and in the rephrased_message body. Do not translate unless the user explicitly asks for translation. "
         "rephrased_message must sound natural and start exactly with: "
         f'"Hi [contact_name], this is an automated message on behalf of {user_name}." '
         "Do not speak the scheduling instruction or call command. missing_fields must list only genuinely missing "

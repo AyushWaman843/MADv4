@@ -110,3 +110,12 @@ data class BasicResponseDto(
     @SerializedName("message")
     val message: String? = null,
 )
+
+data class TranscriptionResponseDto(
+    @SerializedName("status")
+    val status: String,
+    @SerializedName("text")
+    val text: String = "",
+    @SerializedName("message")
+    val message: String? = null,
+)
